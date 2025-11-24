@@ -131,6 +131,8 @@ class LoRAModel:
                     module_name, peft_helper
                 )
 
+            if isinstance(weight_type, bool):
+                weight_type = "A" if weight_type else "B"
             if weight_type == "A":
                 loras[module_name].lora_a = tensor.to(device=device, dtype=dtype)
                 if pin_memory:

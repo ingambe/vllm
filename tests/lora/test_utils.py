@@ -112,6 +112,14 @@ def test_parse_fine_tuned_lora_name_invalid():
             parse_fine_tuned_lora_name(name)
 
 
+def test_parse_fine_tuned_lora_name_dora_magnitude():
+    module_name, weight_type = parse_fine_tuned_lora_name(
+        "base_model.model.layers.0.mlp.down_proj.lora_magnitude_vector"
+    )
+    assert module_name == "layers.0.mlp.down_proj"
+    assert weight_type == "magnitude"
+
+
 def test_replace_submodule():
     model = nn.Sequential(
         OrderedDict(

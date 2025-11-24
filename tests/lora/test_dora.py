@@ -54,7 +54,7 @@ def test_dora_expand_scales_base_and_delta():
         lora_base_norm_stacked=base_norm,
     )
 
-    expected = torch.tensor([[4.0, 4.0], [4.5, 4.5]])
+    expected = torch.tensor([[4.0, 4.0], [3.0, 3.0]])
     assert torch.allclose(y, expected)
 
 

@@ -145,7 +145,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
         )
 
         lora_b_scaled = self._scale_lora_b_with_magnitude(
-            lora_b_stacked, lora_magnitude_stacked
+            lora_b_stacked, lora_magnitude_stacked, lora_base_norm_stacked
         )
         assert x.ndim == 3
         assert x.size(0) == len(output_slices)

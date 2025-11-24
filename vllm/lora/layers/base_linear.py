@@ -141,7 +141,7 @@ class BaseLinearLayerWithLoRA(BaseLayerWithLoRA):
         self.reset_lora(index)
         base_norm = None
         if lora_magnitude is not None:
-            base_norm = self._get_base_norm_slices()
+            base_norm = self._get_base_norm_slices(lora_a=lora_a, lora_b=lora_b)
         if self.tp_size > 1:
             lora_a = self.slice_lora_a(lora_a)
             lora_b = self.slice_lora_b(lora_b)
@@ -240,9 +240,38 @@ class BaseLinearLayerWithLoRA(BaseLayerWithLoRA):
     ) -> torch.Tensor | list[torch.Tensor]:
         return lora_magnitude
 
-    def _get_base_norm_slices(self) -> torch.Tensor | list[torch.Tensor]:
+    def _get_base_norm_slices(
+        self,
+        lora_a: torch.Tensor | list[torch.Tensor] | None = None,
+        lora_b: torch.Tensor | list[torch.Tensor] | None = None,
+    ) -> torch.Tensor | list[torch.Tensor]:
+        weight = self.weight
+        if lora_a is not None and lora_b is not None:
+            if isinstance(lora_a, list):
+                assert isinstance(lora_b, list)
+                base_norms: list[torch.Tensor] = []
+                for a_i, b_i in zip(lora_a, lora_b):
+                    if a_i is None or b_i is None:
+                        base_norms.append(
+                            torch.linalg.vector_norm(weight.float(), dim=1)
+                        )
+                        continue
+                    lora_weight = b_i @ a_i
+                    w_delta = weight + lora_weight
+                    base_norms.append(
+                        torch.linalg.vector_norm(w_delta.float(), dim=1).contiguous()
+                    )
+                return base_norms
+            else:
+                lora_weight = lora_b @ lora_a
+                weight = weight + lora_weight
+                base_norm = torch.linalg.vector_norm(weight.float(), dim=1)
+                if self.n_slices == 1:
+                    return base_norm
+                splits = torch.split(base_norm, self.output_slices)
+                return [s.contiguous() for s in splits]
+
         if self._base_norm_cache is None:
-            weight = self.weight
             base_norm = torch.linalg.vector_norm(weight.float(), dim=1)
             if self.n_slices == 1:
                 self._base_norm_cache = base_norm

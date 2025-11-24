@@ -173,7 +173,7 @@ class PunicaWrapperTPU(PunicaWrapperBase):
             offset_start,
         )
         lora_b_scaled = self._scale_lora_b_with_magnitude(
-            lora_b_stacked, lora_magnitude_stacked
+            lora_b_stacked, lora_magnitude_stacked, lora_base_norm_stacked
         )
 
         for slice_idx in range(len(lora_b_scaled)):

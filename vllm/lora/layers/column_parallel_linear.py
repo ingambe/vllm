@@ -299,7 +299,7 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
         self.reset_lora(index)
         base_norm = None
         if lora_magnitude is not None:
-            base_norm = self._get_base_norm_slices()
+            base_norm = self._get_base_norm_slices(lora_a=lora_a, lora_b=lora_b)
             if isinstance(lora_magnitude, torch.Tensor):
                 lora_magnitude = list(torch.split(lora_magnitude, self.output_slices))
             self._dora_slots.add(index)

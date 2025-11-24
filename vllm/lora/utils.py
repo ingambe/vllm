@@ -126,7 +126,7 @@ def replace_submodule(
 
 def parse_fine_tuned_lora_name(
     name: str, weights_mapper: Optional["WeightsMapper"] = None
-) -> tuple[str, str]:
+) -> tuple[str, bool | str]:
     """Parse the name of lora weights.
 
     args:
@@ -135,9 +135,10 @@ def parse_fine_tuned_lora_name(
         weights_mapper: maps the name of weight, e.g.
             `model.` -> `language_model.model.`,
     return:
-        tuple(module_name, weight_type):
+        tuple(module_name, is_lora_a_or_magnitude):
             module_name: the name of the module, e.g. model.dense1,
-            weight_type: "A", "B", or "magnitude".
+            is_lora_a_or_magnitude: True for lora_A, False for lora_B,
+                or the string "magnitude" for DoRA magnitude vectors.
     """
 
     # LoRA weight qualified name usually starts with `base_model.model.`,
@@ -159,13 +160,13 @@ def parse_fine_tuned_lora_name(
     parts = name.split(".")
     if parts[-1] == "weight" and (parts[-2] == "lora_A" or parts[-2] == "lora_B"):
         new_name = ".".join(parts[start_index:-2])
-        weight_type = "A" if parts[-2] == "lora_A" else "B"
-        return new_name, weight_type
+        is_lora_a = parts[-2] == "lora_A"
+        return new_name, is_lora_a
 
     if parts[-1] == "lora_embedding_A" or parts[-1] == "lora_embedding_B":
         new_name = ".".join(parts[start_index:-1])
-        weight_type = "A" if parts[-1] == "lora_embedding_A" else "B"
-        return new_name, weight_type
+        is_lora_a = parts[-1] == "lora_embedding_A"
+        return new_name, is_lora_a
 
     if parts[-1] == "lora_magnitude_vector":
         new_name = ".".join(parts[start_index:-1])

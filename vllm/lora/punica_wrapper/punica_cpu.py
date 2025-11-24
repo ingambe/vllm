@@ -232,7 +232,7 @@ class PunicaWrapperCPU(PunicaWrapperBase):
             offset_start,
         )
         lora_b_scaled = self._scale_lora_b_with_magnitude(
-            lora_b_stacked, lora_magnitude_stacked
+            lora_b_stacked, lora_magnitude_stacked, lora_base_norm_stacked
         )
         offset_left = offset_start
         for slice_idx in range(len(lora_b_scaled)):

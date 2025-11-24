@@ -284,7 +284,37 @@ def test_punica_dora_expand_cpu():
         lora_base_norm_stacked=base_norm,
     )
 
-    expected = torch.tensor([[4.0, 4.0], [4.5, 4.5]])
+    expected = torch.tensor([[4.0, 4.0], [3.0, 3.0]])
+    assert_close(y, expected)
+
+
+def test_punica_dora_and_non_dora_cpu():
+    """DoRA scaling should not zero non-DoRA adapters in the same batch."""
+    tokens = 2
+    hidden = 2
+    rank = 1
+    max_loras = 2
+    wrapper = PunicaWrapperCPU(tokens, max_batches=1, device="cpu")
+    wrapper.indices_len[0] = tokens
+    wrapper._token_lora_indices[:tokens] = torch.tensor([0, 1], device="cpu")
+
+    y = torch.ones(tokens, hidden)
+    buffer = (torch.ones(tokens, rank),)
+
+    lora_b = (torch.ones(max_loras, 1, hidden, rank),)
+    lora_magnitude = (torch.tensor([[[2.0, 2.0]], [[0.0, 0.0]]]),)
+    base_norm = (torch.tensor([[[1.0, 1.0]], [[0.0, 0.0]]]),)
+
+    wrapper.add_expand(
+        y,
+        buffer,
+        lora_b,
+        (hidden,),
+        lora_magnitude_stacked=lora_magnitude,
+        lora_base_norm_stacked=base_norm,
+    )
+
+    expected = torch.tensor([[4.0, 4.0], [2.0, 2.0]])
     assert_close(y, expected)
 
 

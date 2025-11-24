@@ -179,6 +179,10 @@ class PunicaWrapperBase(PunicaWrapperABC):
         offset_start: int = 0,
     ) -> None:
         """Scale base output for DoRA adapters in-place."""
+        if isinstance(lora_magnitude_stacked, torch.Tensor):
+            lora_magnitude_stacked = (lora_magnitude_stacked,)
+        if isinstance(lora_base_norm_stacked, torch.Tensor):
+            lora_base_norm_stacked = (lora_base_norm_stacked,)
         if (
             lora_magnitude_stacked is None
             or lora_base_norm_stacked is None
@@ -206,6 +210,8 @@ class PunicaWrapperBase(PunicaWrapperABC):
                 base_norm = lora_base_norm_stacked[slice_idx][lora_idx, 0, :].to(
                     device=y.device, dtype=y.dtype
                 )
+                if not torch.any(magnitude) or not torch.any(base_norm):
+                    continue
                 scale = magnitude / torch.clamp(base_norm, min=self._dora_eps)
                 y[mask, offset : offset + slice_size] *= scale
             offset += slice_size
@@ -214,12 +220,27 @@ class PunicaWrapperBase(PunicaWrapperABC):
         self,
         lora_b_stacked: tuple[torch.Tensor, ...],
         lora_magnitude_stacked: tuple[torch.Tensor, ...] | None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None,
     ) -> tuple[torch.Tensor, ...]:
-        if lora_magnitude_stacked is None:
+        if isinstance(lora_magnitude_stacked, torch.Tensor):
+            lora_magnitude_stacked = (lora_magnitude_stacked,)
+        if isinstance(lora_base_norm_stacked, torch.Tensor):
+            lora_base_norm_stacked = (lora_base_norm_stacked,)
+        if lora_magnitude_stacked is None or lora_base_norm_stacked is None:
             return lora_b_stacked
         scaled = []
-        for b, mag in zip(lora_b_stacked, lora_magnitude_stacked):
-            scaled.append(b * mag.unsqueeze(-1))
+        for b, mag, base_norm in zip(
+            lora_b_stacked, lora_magnitude_stacked, lora_base_norm_stacked
+        ):
+            mag = mag.to(device=b.device, dtype=b.dtype)
+            base_norm = base_norm.to(device=b.device, dtype=b.dtype)
+            scale = torch.ones_like(mag, device=b.device, dtype=b.dtype)
+            active = (mag != 0) & (base_norm != 0)
+            if torch.any(active):
+                scale[active] = mag[active] / torch.clamp(
+                    base_norm[active], min=self._dora_eps
+                )
+            scaled.append(b * scale.unsqueeze(-1))
         return tuple(scaled)
 
     def _update_base_metadata(
