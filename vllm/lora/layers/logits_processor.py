@@ -130,6 +130,7 @@ class LogitsProcessorWithLoRA(BaseLayerWithLoRA):
         index: int,
         lora_a: torch.Tensor | list[torch.Tensor],
         lora_b: torch.Tensor | list[torch.Tensor],
+        lora_magnitude: torch.Tensor | list[torch.Tensor] | None = None,
     ):
         assert isinstance(lora_a, torch.Tensor)
         assert isinstance(lora_b, torch.Tensor)

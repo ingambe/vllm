@@ -21,6 +21,8 @@ class LoRALayerWeights:
         lora_alpha: int,
         lora_a: torch.Tensor,
         lora_b: torch.Tensor,
+        magnitude_vector: torch.Tensor | None = None,
+        base_norm: torch.Tensor | None = None,
         scaling: float | None = None,
     ) -> None:
         self.module_name = module_name
@@ -28,6 +30,8 @@ class LoRALayerWeights:
         self.lora_alpha = lora_alpha
         self.lora_a = lora_a
         self.lora_b = lora_b
+        self.magnitude_vector = magnitude_vector
+        self.base_norm = base_norm
 
         if scaling is None:
             self.scaling = self.lora_alpha / self.rank
@@ -67,6 +71,8 @@ class LoRALayerWeights:
             peft_helper.lora_alpha,
             None,
             None,
+            None,
+            None,
             peft_helper.vllm_lora_scaling_factor,
         )
 
@@ -79,6 +85,7 @@ class LoRALayerWeights:
         rank: int,
         dtype: torch.dtype,
         device: torch.types.Device,
+        with_magnitude: bool = False,
     ) -> "LoRALayerWeights":
         pin_memory = str(device) == "cpu" and is_pin_memory_available()
         lora_a = torch.zeros(
@@ -87,6 +94,11 @@ class LoRALayerWeights:
         lora_b = torch.zeros(
             [output_dim, rank], dtype=dtype, device=device, pin_memory=pin_memory
         )
+        magnitude_vector = (
+            torch.zeros(output_dim, dtype=dtype, device=device, pin_memory=pin_memory)
+            if with_magnitude
+            else None
+        )
 
         return cls(
             module_name,
@@ -94,6 +106,7 @@ class LoRALayerWeights:
             lora_alpha=1,
             lora_a=lora_a,
             lora_b=lora_b,
+            magnitude_vector=magnitude_vector,
         )
 
 

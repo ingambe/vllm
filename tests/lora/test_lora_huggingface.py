@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
+import safetensors.torch
+import torch
 
 from vllm.lora.models import LoRAModel
 from vllm.lora.peft_helper import PEFTHelper
@@ -49,3 +51,38 @@ def test_load_checkpoints_from_huggingface(lora_fixture_name, request):
 
     # Assertions to ensure the model is loaded correctly
     assert lora_model is not None, "LoRAModel is not loaded correctly"
+
+
+def test_load_local_dora_checkpoint(tmp_path):
+    adapter_dir = tmp_path / "local_dora"
+    adapter_dir.mkdir()
+    config = {
+        "r": 2,
+        "lora_alpha": 4,
+        "target_modules": ["dense"],
+        "use_dora": True,
+    }
+    (adapter_dir / "adapter_config.json").write_text(__import__("json").dumps(config))
+    lora_a = torch.randn(2, 3)
+    lora_b = torch.randn(5, 2)
+    magnitude = torch.rand(5)
+    safetensors.torch.save_file(
+        {
+            "dense.lora_A.weight": lora_a,
+            "dense.lora_B.weight": lora_b,
+            "dense.lora_magnitude_vector": magnitude,
+        },
+        adapter_dir / "adapter_model.safetensors",
+    )
+
+    peft_helper = PEFTHelper.from_local_dir(adapter_dir, 128)
+    lora_model = LoRAModel.from_local_checkpoint(
+        adapter_dir,
+        expected_lora_modules=["dense"],
+        peft_helper=peft_helper,
+        lora_model_id=1,
+        device="cpu",
+        embedding_modules={},
+        embedding_padding_modules=[],
+    )
+    assert lora_model.loras["dense"].magnitude_vector is not None

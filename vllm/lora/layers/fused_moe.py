@@ -414,6 +414,7 @@ class FusedMoEWithLoRA(BaseLayerWithLoRA):
         index: int,
         lora_a: torch.Tensor | list[torch.Tensor],
         lora_b: torch.Tensor | list[torch.Tensor],
+        lora_magnitude: torch.Tensor | list[torch.Tensor] | None = None,
     ):
         """Overwrites lora tensors at index."""
         assert isinstance(lora_a, list)
@@ -631,6 +632,7 @@ class FusedMoE3DWithLoRA(FusedMoEWithLoRA):
         index: int,
         lora_a: torch.Tensor | list[torch.Tensor],
         lora_b: torch.Tensor | list[torch.Tensor],
+        lora_magnitude: torch.Tensor | list[torch.Tensor] | None = None,
     ):
         """Overwrites lora tensors at index."""
         # Make mypy happy

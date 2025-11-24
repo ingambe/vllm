@@ -61,6 +61,10 @@ def _mcp_apply(x, bias, layer: "ColumnParallelLinearWithLoRA"):
         layer.output_slices,
         offset_start=0,
         add_input=True,
+        lora_magnitude_stacked=(layer.lora_mag_stacked if layer._dora_slots else None),
+        lora_base_norm_stacked=(
+            layer.lora_base_norm_stacked if layer._dora_slots else None
+        ),
     )
 
     if not current_platform.can_update_inplace():
@@ -117,6 +121,25 @@ class ColumnParallelLinearWithLoRA(BaseLinearLayerWithLoRA):
             end_idx = (self.tp_rank + 1) * shard_size
             lora_b = lora_b[start_idx:end_idx, :]
         return lora_b
+
+    def slice_lora_magnitude(self, lora_magnitude: torch.Tensor) -> torch.Tensor:
+        if self.is_merged_col_linear:
+            shard_size = self.output_size // 2
+            offset = lora_magnitude.shape[0] // 2
+            left = lora_magnitude[
+                self.tp_rank * shard_size : (self.tp_rank + 1) * shard_size
+            ]
+            right = lora_magnitude[
+                offset + self.tp_rank * shard_size : offset
+                + (self.tp_rank + 1) * shard_size
+            ]
+            lora_magnitude = torch.cat([left, right], dim=0)
+        else:
+            shard_size = self.output_size
+            start_idx = self.tp_rank * shard_size
+            end_idx = (self.tp_rank + 1) * shard_size
+            lora_magnitude = lora_magnitude[start_idx:end_idx]
+        return lora_magnitude
 
     def forward(
         self, input_: torch.Tensor
@@ -224,6 +247,16 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
             )
             for output_size in self.output_slices
         )
+        self.lora_mag_stacked = tuple(
+            torch.zeros(
+                max_loras,
+                1,
+                output_size,
+                dtype=lora_config.lora_dtype,
+                device=self.device,
+            )
+            for output_size in self.output_slices
+        )
 
     def slice_lora_a(
         self, lora_a: list[torch.Tensor | None]
@@ -243,17 +276,43 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
                 ]
         return sliced_lora_b
 
+    def slice_lora_magnitude(
+        self, lora_magnitude: list[torch.Tensor | None]
+    ) -> list[torch.Tensor | None]:
+        sliced_lora_mag = [None] * self.n_slices
+        for i, (shard_id, shard_size) in enumerate(
+            zip(self.output_ids, self.output_slices)
+        ):
+            if (lora_mag_i := lora_magnitude[i]) is not None:
+                sliced_lora_mag[i] = lora_mag_i[
+                    shard_size * shard_id : shard_size * (shard_id + 1)
+                ]
+        return sliced_lora_mag
+
     def set_lora(
         self,
         index: int,
         lora_a: torch.Tensor | list[torch.Tensor],
         lora_b: torch.Tensor | list[torch.Tensor],
+        lora_magnitude: torch.Tensor | list[torch.Tensor] | None = None,
     ):
         self.reset_lora(index)
+        base_norm = None
+        if lora_magnitude is not None:
+            base_norm = self._get_base_norm_slices()
+            if isinstance(lora_magnitude, torch.Tensor):
+                lora_magnitude = list(torch.split(lora_magnitude, self.output_slices))
+            self._dora_slots.add(index)
+        else:
+            self._dora_slots.discard(index)
 
         if self.tp_size > 1:
             lora_a = self.slice_lora_a(lora_a)
             lora_b = self.slice_lora_b(lora_b)
+            if lora_magnitude is not None:
+                lora_magnitude = self.slice_lora_magnitude(lora_magnitude)
+                if base_norm is not None:
+                    base_norm = self.slice_lora_magnitude(base_norm)
 
         for i in range(self.n_slices):
             if (lora_a_i := lora_a[i]) is not None:
@@ -264,6 +323,26 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
                 self.lora_b_stacked[i][
                     index, 0, : lora_b_i.shape[0], : lora_b_i.shape[1]
                 ].copy_(lora_b_i, non_blocking=True)
+            if (
+                lora_magnitude is not None
+                and self.lora_mag_stacked is not None
+                and (lora_mag_i := lora_magnitude[i]) is not None
+            ):
+                self.lora_mag_stacked[i][index, 0, : lora_mag_i.shape[0]].copy_(
+                    lora_mag_i, non_blocking=True
+                )
+            if (
+                base_norm is not None
+                and self.lora_base_norm_stacked is not None
+                and (base_norm_i := base_norm[i]) is not None
+            ):
+                self.lora_base_norm_stacked[i][index, 0, : base_norm_i.shape[0]].copy_(
+                    base_norm_i.to(
+                        device=self.device,
+                        dtype=self.lora_base_norm_stacked[i].dtype,
+                    ),
+                    non_blocking=True,
+                )
 
     @classmethod
     @_not_fully_sharded_can_replace
@@ -330,6 +409,25 @@ class QKVParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
         ]
         lora_b = torch.cat([lora_b_q, lora_b_k, lora_b_v], dim=0)
         return lora_b
+
+    def slice_lora_magnitude(self, lora_magnitude: torch.Tensor) -> torch.Tensor:
+        self.q_shard_id = self.tp_rank
+        self.kv_shard_id = self.tp_rank // self.base_layer.num_kv_head_replicas
+        mag_q = lora_magnitude[
+            self.q_proj_shard_size * self.q_shard_id : self.q_proj_shard_size
+            * (self.q_shard_id + 1)
+        ]
+        k_offset = self.q_proj_total_size
+        mag_k = lora_magnitude[
+            k_offset + self.kv_proj_shard_size * self.kv_shard_id : k_offset
+            + self.kv_proj_shard_size * (self.kv_shard_id + 1)
+        ]
+        v_offset = k_offset + self.kv_proj_total_size
+        mag_v = lora_magnitude[
+            v_offset + self.kv_proj_shard_size * self.kv_shard_id : v_offset
+            + self.kv_proj_shard_size * (self.kv_shard_id + 1)
+        ]
+        return torch.cat([mag_q, mag_k, mag_v], dim=0)
 
     @classmethod
     @_not_fully_sharded_can_replace

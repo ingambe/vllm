@@ -62,6 +62,8 @@ class PunicaWrapperABC(ABC):
         output_slices: tuple[int, ...],
         offset_start: int = 0,
         add_inputs=True,
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None = None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> torch.Tensor | None:
         """
@@ -95,6 +97,8 @@ class PunicaWrapperABC(ABC):
         output_slices: tuple[int, ...],
         *,
         buffer: tuple[torch.Tensor, ...] | None = None,
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None = None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> torch.Tensor | None:
         """
@@ -164,6 +168,59 @@ class PunicaWrapperBase(PunicaWrapperABC):
         self.batch_size: int = -1
         self.is_prefill = False
         self.no_lora = False
+        self._dora_eps = 1e-6
+
+    def _apply_dora_output_scaling(
+        self,
+        y: torch.Tensor,
+        output_slices: tuple[int, ...],
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None,
+        offset_start: int = 0,
+    ) -> None:
+        """Scale base output for DoRA adapters in-place."""
+        if (
+            lora_magnitude_stacked is None
+            or lora_base_norm_stacked is None
+            or y.numel() == 0
+        ):
+            return
+        total_mag = sum([mag.abs().sum() for mag in lora_magnitude_stacked])
+        total_norm = sum([norm.abs().sum() for norm in lora_base_norm_stacked])
+        if total_mag == 0 or total_norm == 0:
+            return
+
+        token_indices = self.token_lora_indices
+        unique_indices = torch.unique(token_indices)
+        offset = offset_start
+        for slice_idx, slice_size in enumerate(output_slices):
+            for lora_idx in unique_indices:
+                if lora_idx < 0:
+                    continue
+                mask = token_indices == lora_idx
+                if not torch.any(mask):
+                    continue
+                magnitude = lora_magnitude_stacked[slice_idx][lora_idx, 0, :].to(
+                    device=y.device, dtype=y.dtype
+                )
+                base_norm = lora_base_norm_stacked[slice_idx][lora_idx, 0, :].to(
+                    device=y.device, dtype=y.dtype
+                )
+                scale = magnitude / torch.clamp(base_norm, min=self._dora_eps)
+                y[mask, offset : offset + slice_size] *= scale
+            offset += slice_size
+
+    def _scale_lora_b_with_magnitude(
+        self,
+        lora_b_stacked: tuple[torch.Tensor, ...],
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None,
+    ) -> tuple[torch.Tensor, ...]:
+        if lora_magnitude_stacked is None:
+            return lora_b_stacked
+        scaled = []
+        for b, mag in zip(lora_b_stacked, lora_magnitude_stacked):
+            scaled.append(b * mag.unsqueeze(-1))
+        return tuple(scaled)
 
     def _update_base_metadata(
         self,
@@ -333,6 +390,8 @@ class PunicaWrapperBase(PunicaWrapperABC):
         output_slices: tuple[int, ...],
         offset_start: int = 0,
         add_inputs=True,
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None = None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> torch.Tensor | None:
         """
@@ -352,6 +411,8 @@ class PunicaWrapperBase(PunicaWrapperABC):
             output_slices (tuple[int, ...]): Every slice's size
             offset_start (int): The starting position of y, defaults to 0
             add_inputs (bool):  Defaults to True.
+            lora_magnitude_stacked: Optional stacked DoRA magnitudes.
+            lora_base_norm_stacked: Optional stacked base norms for DoRA.
 
         """
         # TODO: implement it based on torch ops
@@ -392,6 +453,8 @@ class PunicaWrapperBase(PunicaWrapperABC):
         output_slices: tuple[int, ...],
         *,
         buffer: tuple[torch.Tensor, ...] | None = None,
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None = None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> torch.Tensor | None:
         """

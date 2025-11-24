@@ -149,6 +149,12 @@ class RowParallelLinearWithShardedLoRA(RowParallelLinearWithLoRA):
             self.output_slices,
             offset_start=offset_start,
             add_input=True,
+            lora_magnitude_stacked=(
+                self.lora_mag_stacked if self._dora_slots else None
+            ),
+            lora_base_norm_stacked=(
+                self.lora_base_norm_stacked if self._dora_slots else None
+            ),
         )
 
         if not current_platform.can_update_inplace():

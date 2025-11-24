@@ -108,6 +108,8 @@ class PunicaWrapperXPU(PunicaWrapperBase):
         output_slices: tuple[int, ...],
         offset_start: int = 0,
         add_inputs=True,
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None = None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> None:
         """
@@ -132,12 +134,22 @@ class PunicaWrapperXPU(PunicaWrapperBase):
         assert x.ndim == 3
         assert x.size(0) == len(output_slices)
 
+        self._apply_dora_output_scaling(
+            y,
+            output_slices,
+            lora_magnitude_stacked,
+            lora_base_norm_stacked,
+            offset_start,
+        )
+        lora_b_scaled = self._scale_lora_b_with_magnitude(
+            lora_b_stacked, lora_magnitude_stacked
+        )
         # TODO fuse these kernels
-        for slice_idx in range(len(lora_b_stacked)):
+        for slice_idx in range(len(lora_b_scaled)):
             self._apply_expand(
                 y,
                 x[slice_idx],
-                lora_b_stacked[slice_idx],
+                lora_b_scaled[slice_idx],
                 offset_start,
                 output_slices[slice_idx],
                 add_inputs=add_inputs,
@@ -178,6 +190,8 @@ class PunicaWrapperXPU(PunicaWrapperBase):
         output_slices: tuple[int, ...],
         *,
         buffer: torch.Tensor | None = None,
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None = None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> None:
         """
@@ -226,6 +240,8 @@ class PunicaWrapperXPU(PunicaWrapperBase):
             lora_b_stacked,
             output_slices,
             add_inputs=True,
+            lora_magnitude_stacked=lora_magnitude_stacked,
+            lora_base_norm_stacked=lora_base_norm_stacked,
             **kwargs,
         )
 

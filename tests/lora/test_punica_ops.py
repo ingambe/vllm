@@ -9,6 +9,7 @@ import vllm.lora.ops.torch_ops as torch_ops
 import vllm.lora.ops.triton_ops as triton_ops
 from vllm.lora.ops.triton_ops import LoRAKernelMeta
 from vllm.lora.ops.triton_ops.utils import _LORA_A_PTR_DICT, _LORA_B_PTR_DICT
+from vllm.lora.punica_wrapper.punica_cpu import PunicaWrapperCPU
 from vllm.platforms import current_platform
 
 from .utils import PunicaTensors, assert_close, generate_data_for_nslices
@@ -251,6 +252,40 @@ def check_lora_expand_kernel(
     )
 
     assert_close(out_tensor, ref_out_tensor)
+
+
+def test_punica_dora_expand_cpu():
+    """Ensure DoRA magnitude scaling runs through the punica wrapper."""
+    tokens = 2
+    hidden = 2
+    rank = 1
+    max_loras = 2
+    wrapper = PunicaWrapperCPU(tokens, max_batches=1, device="cpu")
+    wrapper.indices_len[0] = tokens
+    wrapper._token_lora_indices[:tokens] = torch.tensor([0, 1], device="cpu")
+
+    # Base output and buffer from shrink
+    y = torch.ones(tokens, hidden)
+    buffer = (torch.ones(tokens, rank),)
+
+    lora_b = (torch.zeros(max_loras, 1, hidden, rank),)
+    lora_b[0][0, 0].fill_(1.0)
+    lora_b[0][1, 0].fill_(1.0)
+
+    lora_magnitude = (torch.tensor([[[2.0, 2.0]], [[3.0, 3.0]]]),)
+    base_norm = (torch.tensor([[[1.0, 1.0]], [[2.0, 2.0]]]),)
+
+    wrapper.add_expand(
+        y,
+        buffer,
+        lora_b,
+        (hidden,),
+        lora_magnitude_stacked=lora_magnitude,
+        lora_base_norm_stacked=base_norm,
+    )
+
+    expected = torch.tensor([[4.0, 4.0], [4.5, 4.5]])
+    assert_close(y, expected)
 
 
 # Tests

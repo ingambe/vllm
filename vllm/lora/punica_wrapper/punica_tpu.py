@@ -142,6 +142,8 @@ class PunicaWrapperTPU(PunicaWrapperBase):
         output_slices: tuple[int, ...],
         offset_start: int = 0,
         add_inputs=True,
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None = None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -163,12 +165,22 @@ class PunicaWrapperTPU(PunicaWrapperBase):
         y_org = y
         y = y.view(-1, y.shape[-1])
         offset_left = 0
+        self._apply_dora_output_scaling(
+            y,
+            output_slices,
+            lora_magnitude_stacked,
+            lora_base_norm_stacked,
+            offset_start,
+        )
+        lora_b_scaled = self._scale_lora_b_with_magnitude(
+            lora_b_stacked, lora_magnitude_stacked
+        )
 
-        for slice_idx in range(len(lora_b_stacked)):
+        for slice_idx in range(len(lora_b_scaled)):
             y = self.expand_slice(
                 y,
                 x[slice_idx],
-                lora_b_stacked[slice_idx],
+                lora_b_scaled[slice_idx],
                 offset_left,
                 output_slices[slice_idx],
                 add_inputs=add_inputs,
@@ -210,6 +222,8 @@ class PunicaWrapperTPU(PunicaWrapperBase):
         output_slices: tuple[int, ...],
         *,
         buffer: tuple[torch.Tensor, ...] | None = None,
+        lora_magnitude_stacked: tuple[torch.Tensor, ...] | None = None,
+        lora_base_norm_stacked: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -246,7 +260,14 @@ class PunicaWrapperTPU(PunicaWrapperBase):
             )
         buffer = self.add_shrink(buffer, x, lora_a_stacked, scale, **kwargs)
         return self.add_expand(
-            y, buffer, lora_b_stacked, output_slices, add_inputs=True, **kwargs
+            y,
+            buffer,
+            lora_b_stacked,
+            output_slices,
+            add_inputs=True,
+            lora_magnitude_stacked=lora_magnitude_stacked,
+            lora_base_norm_stacked=lora_base_norm_stacked,
+            **kwargs,
         )
 
     def add_lora_logits(

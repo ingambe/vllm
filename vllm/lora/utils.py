@@ -126,7 +126,7 @@ def replace_submodule(
 
 def parse_fine_tuned_lora_name(
     name: str, weights_mapper: Optional["WeightsMapper"] = None
-) -> tuple[str, bool]:
+) -> tuple[str, str]:
     """Parse the name of lora weights.
 
     args:
@@ -135,9 +135,9 @@ def parse_fine_tuned_lora_name(
         weights_mapper: maps the name of weight, e.g.
             `model.` -> `language_model.model.`,
     return:
-        tuple(module_name, is_lora_a):
+        tuple(module_name, weight_type):
             module_name: the name of the module, e.g. model.dense1,
-            is_lora_a whether the tensor is lora_a or lora_b.
+            weight_type: "A", "B", or "magnitude".
     """
 
     # LoRA weight qualified name usually starts with `base_model.model.`,
@@ -159,11 +159,17 @@ def parse_fine_tuned_lora_name(
     parts = name.split(".")
     if parts[-1] == "weight" and (parts[-2] == "lora_A" or parts[-2] == "lora_B"):
         new_name = ".".join(parts[start_index:-2])
-        return new_name, parts[-2] == "lora_A"
+        weight_type = "A" if parts[-2] == "lora_A" else "B"
+        return new_name, weight_type
 
     if parts[-1] == "lora_embedding_A" or parts[-1] == "lora_embedding_B":
         new_name = ".".join(parts[start_index:-1])
-        return new_name, parts[-1] == "lora_embedding_A"
+        weight_type = "A" if parts[-1] == "lora_embedding_A" else "B"
+        return new_name, weight_type
+
+    if parts[-1] == "lora_magnitude_vector":
+        new_name = ".".join(parts[start_index:-1])
+        return new_name, "magnitude"
 
     raise ValueError(f"{name} is unsupported LoRA weight")
 

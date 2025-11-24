@@ -113,6 +113,42 @@ def create_packed_lora(
     return LoRAModel(lora_id, 8, loras)
 
 
+def test_activate_dora_sets_magnitude(dummy_model, dist_init):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = dummy_model.to(device)
+    lora_config = LoRAConfig(
+        max_lora_rank=4, max_cpu_loras=2, max_loras=2, lora_dtype=torch.float32
+    )
+    manager = LoRAModelManager(
+        model,
+        max_num_seqs=2,
+        max_num_batched_tokens=2,
+        vocab_size=2,
+        lora_config=lora_config,
+        device=device,
+    )
+    module = model.get_submodule("dense1")
+    weight = module.weight
+    rank = 4
+    lora = LoRALayerWeights(
+        "dense1",
+        rank,
+        8,
+        torch.ones([rank, weight.shape[1]], device=device),
+        torch.ones([weight.shape[0], rank], device=device),
+        magnitude_vector=torch.ones(weight.shape[0], device=device),
+    )
+    lora_model = LoRAModel(1, rank, {"dense1": lora})
+
+    assert manager.add_adapter(lora_model)
+    assert manager.activate_adapter(1)
+    dense_with_lora = manager.model.get_submodule("dense1")
+    assert hasattr(dense_with_lora, "lora_mag_stacked")
+    assert dense_with_lora.lora_mag_stacked is not None
+    # Magnitude should have been copied into slot 0
+    assert dense_with_lora.lora_mag_stacked[0][0].sum() > 0
+
+
 def test_replace_submodules(dist_init, dummy_model):
     model = dummy_model
     manager = LoRAModelManager(

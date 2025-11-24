@@ -123,7 +123,7 @@ class LoRAModel:
         for tensor_name, tensor in tensors.items():
             if is_base_embeddding_weights(tensor_name):
                 continue
-            module_name, is_lora_a = parse_fine_tuned_lora_name(
+            module_name, weight_type = parse_fine_tuned_lora_name(
                 tensor_name, weights_mapper
             )
             if module_name not in loras:
@@ -131,11 +131,11 @@ class LoRAModel:
                     module_name, peft_helper
                 )
 
-            if is_lora_a:
+            if weight_type == "A":
                 loras[module_name].lora_a = tensor.to(device=device, dtype=dtype)
                 if pin_memory:
                     loras[module_name].lora_a = loras[module_name].lora_a.pin_memory()
-            else:
+            elif weight_type == "B":
                 loras[module_name].lora_b = tensor.to(device=device, dtype=dtype)
                 assert embedding_padding_modules is not None
                 if (
@@ -150,6 +150,22 @@ class LoRAModel:
                     )
                 if pin_memory:
                     loras[module_name].lora_b = loras[module_name].lora_b.pin_memory()
+            else:
+                loras[module_name].magnitude_vector = tensor.to(
+                    device=device, dtype=dtype
+                )
+                mag = loras[module_name].magnitude_vector
+                if pin_memory and mag is not None:
+                    loras[module_name].magnitude_vector = mag.pin_memory()
+
+        if peft_helper.use_dora:
+            missing_magnitude = [
+                name for name, lora in loras.items() if lora.magnitude_vector is None
+            ]
+            if missing_magnitude:
+                raise ValueError(
+                    f"DoRA adapter missing magnitude_vector for {missing_magnitude}."
+                )
 
         for lora in loras.values():
             lora.optimize()
@@ -464,10 +480,17 @@ class LoRAModelManager:
 
                     module_lora.lora_a = lora_a
                     module_lora.lora_b = lora_b
+            if module_lora.magnitude_vector is not None and not hasattr(
+                module, "lora_mag_stacked"
+            ):
+                raise ValueError(
+                    f"DoRA is not supported for module type {type(module).__name__}."
+                )
             module.set_lora(
                 index,
                 module_lora.lora_a,
                 module_lora.lora_b,
+                module_lora.magnitude_vector,
             )
 
         return True
